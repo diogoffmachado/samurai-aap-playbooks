@@ -8,7 +8,7 @@ from jinja2 import StrictUndefined, UndefinedError
 from jinja2.nativetypes import NativeEnvironment
 
 ROOT = Path(__file__).resolve().parents[1]
-ROLE = yaml.safe_load((ROOT / 'roles/decommission/tasks/main.yml').read_text())
+ROLE = yaml.safe_load((ROOT / 'roles/decommission/tasks/aws.yml').read_text())
 ENV = NativeEnvironment(undefined=StrictUndefined)
 
 

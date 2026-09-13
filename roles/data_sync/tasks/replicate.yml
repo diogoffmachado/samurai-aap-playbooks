@@ -61,7 +61,14 @@
     # validação de caminho, porque é ele quem passa a preencher `data_sync_source`.
     - name: "[data_sync] Resolve the source from a cloud snapshot"
       ansible.builtin.include_tasks: cloud_source.yml
-      when: data_sync_source_snapshot | default('') | length > 0
+      when:
+        - data_sync_source_snapshot | default('') | length > 0
+        - data_sync_source_transport | default('cloud-volume') == 'cloud-volume'
+      tags: [data_sync, cloud]
+
+    - name: "[data_sync] Resolve the private snapshot export"
+      ansible.builtin.include_tasks: snapshot_source.yml
+      when: data_sync_source_transport | default('cloud-volume') == 'snapshot-export'
       tags: [data_sync, cloud]
 
     - name: "[data_sync] Require a source"
@@ -273,6 +280,26 @@
       tags: [data_sync, guard]
 
   always:
+    - name: "[data_sync] Remove private source material and revoke snapshot access"
+      block:
+        - name: "[data_sync] Run snapshot export cleanup"
+          ansible.builtin.include_tasks: snapshot_cleanup.yml
+          when: data_sync_source_transport | default('cloud-volume') == 'snapshot-export'
+      rescue:
+        - name: "[data_sync] Keep unconfirmed export cleanup visible"
+          ansible.builtin.set_fact:
+            data_sync_cloud_residue: "{{ data_sync_cloud_residue | default([]) + ['snapshot-access:' ~ data_sync_execution_id] }}"
+            data_sync_cloud_residue_reason: "Snapshot export cleanup could not be completed"
+            data_sync_cleanup_failed: true
+      always:
+        - name: "[data_sync] Clear private source responses"
+          ansible.builtin.set_fact:
+            data_sync_snapshot_response: {}
+            data_sync_snapshot_close: {}
+            data_continuity_callback_headers: {}
+            data_continuity_private_callbacks: {}
+          no_log: true
+
     # As duas limpezas são INDEPENDENTES de propósito. Num `always` sequencial, a falha da
     # primeira aborta a lista e a segunda nunca roda — e a segunda é justamente a que
     # destrói um volume com cópia de dado de cliente em repouso. Um binário que não pôde

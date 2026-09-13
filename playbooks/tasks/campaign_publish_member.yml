@@ -23,3 +23,5 @@
         data_sync_volume_results: "{{ campaign_data_sync_volume_results | default([]) }}"
         validation_passed: "{{ validation_passed | default(false) }}"
         preparation_completed: "{{ campaign_preparation_completed | default(false) }}"
+        candidate_infrastructure: "{{ candidate_infrastructure | default({}) }}"
+        destination_observation: "{{ campaign_destination_observation | default({}) }}"

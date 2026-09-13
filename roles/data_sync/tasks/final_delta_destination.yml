@@ -9,20 +9,22 @@
     quiet: true
 
 - name: "[data_sync] Read current destination mounts before final delta"
-  ansible.builtin.command:
-    argv: [lsblk, --json, --bytes, --paths, --output, 'NAME,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINTS']
+  samurai_destination_observation:
+    organization_id: "{{ organization_id | int }}"
+    provider: "{{ samurai_destination_provider }}"
   become: "{{ data_sync_become | bool }}"
-  changed_when: false
   register: data_sync_final_devices
 
 - name: "[data_sync] Verify the planned destination mount"
   ansible.builtin.set_fact:
+    campaign_destination_observation: "{{ data_sync_final_devices.observation }}"
     data_sync_final_unmount_required: >-
       {{ data_sync_destination_volume_id | samurai_destination_needs_unmount(
-         data_sync_final_devices.stdout | from_json, data_sync_item.mount_point | default('')) }}
+         data_sync_final_devices.observation, data_sync_item.mount_point | default(''),
+         samurai_destination_provider, data_sync_destination_bindings | default([])) }}
     data_sync_final_device: >-
       {{ data_sync_destination_volume_id | samurai_destination_device(
-         data_sync_final_devices.stdout | from_json) }}
+         data_sync_final_devices.observation, samurai_destination_provider, data_sync_destination_bindings | default([])) }}
 
 - name: "[data_sync] Refuse a device that changed during stage preparation"
   ansible.builtin.assert:

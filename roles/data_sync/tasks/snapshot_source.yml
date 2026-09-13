@@ -1,0 +1,74 @@
+---
+- name: "[data_sync] Require governed snapshot export inputs"
+  ansible.builtin.assert:
+    that:
+      - samurai_engine_callback_auth | default(false) | bool
+      - data_sync_execution_id | default('') | length > 0
+      - data_sync_source_snapshot | default('') | length > 0
+    quiet: true
+
+- name: "[data_sync] Load private export authentication"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/data_continuity_callback_auth.yml"
+  vars:
+    data_continuity_callback_operation: open-snapshot-source
+
+- name: "[data_sync] Open the source snapshot through its execution authority"
+  ansible.builtin.uri:
+    url: "{{ samurai_engine_base_url | regex_replace('/$', '') }}/campaign-executions/{{ samurai_campaign_server_execution_id }}/data-continuity/open-snapshot-source"
+    method: POST
+    headers: "{{ data_continuity_callback_headers }}"
+    body_format: json
+    body:
+      source_instance_id: "{{ samurai_source_instance_id }}"
+      replication_execution_id: "{{ data_sync_execution_id }}"
+    status_code: [200]
+    timeout: 120
+  delegate_to: localhost
+  become: false
+  register: data_sync_snapshot_response
+  until: not (data_sync_snapshot_response.json.pending | default(false) | bool)
+  retries: 120
+  delay: 5
+  no_log: true
+
+- name: "[data_sync] Require the descriptor for this exact copy"
+  ansible.builtin.assert:
+    that:
+      - data_sync_snapshot_response.json.opened | default(false) | bool
+      - data_sync_snapshot_response.json.replication_execution_id == data_sync_execution_id
+      - data_sync_snapshot_response.json.descriptor.organization_id | int == organization_id | int
+      - data_sync_snapshot_response.json.descriptor.execution_id == data_sync_execution_id
+      - data_sync_snapshot_response.json.descriptor.source_volume_id == data_sync_item_volume_id
+      - data_sync_snapshot_response.json.descriptor.snapshot_id == data_sync_source_snapshot
+    fail_msg: "The Engine did not authorize private source access for this copy"
+    quiet: true
+  no_log: true
+
+- name: "[data_sync] Ensure the private working directory exists"
+  ansible.builtin.file:
+    path: "{{ data_sync_journal_dir }}"
+    state: directory
+    mode: "0700"
+  become: "{{ data_sync_become | bool }}"
+
+- name: "[data_sync] Create a private descriptor directory on the candidate"
+  ansible.builtin.tempfile:
+    state: directory
+    path: "{{ data_sync_journal_dir }}"
+    prefix: samurai-snapshot-
+  become: "{{ data_sync_become | bool }}"
+  register: data_sync_snapshot_directory
+
+- name: "[data_sync] Write the private snapshot descriptor"
+  ansible.builtin.copy:
+    content: "{{ data_sync_snapshot_response.json.descriptor | to_json }}"
+    dest: "{{ data_sync_snapshot_directory.path }}/source.json"
+    mode: "0600"
+  become: "{{ data_sync_become | bool }}"
+  no_log: true
+
+- name: "[data_sync] Select the private file endpoint"
+  ansible.builtin.set_fact:
+    data_sync_source: "http-source+file://{{ data_sync_snapshot_directory.path }}/source.json"
+    data_sync_snapshot_response: {}
+  no_log: true

@@ -156,6 +156,72 @@
            else false }}
   tags: [inventory_collect, collect, functional]
 
+# The chassis tag selects the metadata probe; it does not authorize cloud mutation.
+# Publish the guest observation for independent provider corroboration.
+- name: "[inventory_collect] Observe Azure instance metadata (read-only, Azure chassis only)"
+  ansible.builtin.uri:
+    url: "http://169.254.169.254/metadata/instance/compute?api-version=2021-02-01"
+    use_proxy: false
+    follow_redirects: none
+    headers:
+      Metadata: "true"
+    method: GET
+    return_content: true
+    timeout: 5
+  register: inventory_collect_azure_imds
+  when: (ansible_facts.chassis_asset_tag | default('')) == '7783-7084-3265-9085-8269-3286-77'
+  changed_when: false
+  failed_when: false
+  tags: [inventory_collect, collect]
+
+- name: "[inventory_collect] Observe Azure disk links (read-only)"
+  ansible.builtin.command:
+    argv:
+      - "{{ ansible_facts.python.executable }}"
+      - -c
+      - |
+        import json, os, stat
+        links = []
+        for base, dirs, names in os.walk('/dev/disk/azure'):
+            for name in names:
+                path = os.path.join(base, name)
+                if not os.path.islink(path):
+                    continue
+                target = os.path.realpath(path)
+                try:
+                    is_block = stat.S_ISBLK(os.stat(target).st_mode)
+                except OSError:
+                    is_block = False
+                links.append({'path': path, 'target': target, 'is_block': is_block})
+        print(json.dumps(sorted(links, key=lambda item: item['path'])))
+  register: inventory_collect_azure_disk_links
+  when: (ansible_facts.chassis_asset_tag | default('')) == '7783-7084-3265-9085-8269-3286-77'
+  changed_when: false
+  failed_when: false
+  tags: [inventory_collect, collect]
+
+- name: "[inventory_collect] Publish observed cloud metadata (never inferred)"
+  ansible.builtin.set_fact:
+    ansible_facts: >-
+      {{ ansible_facts | combine({
+          'samurai_cloud_metadata': {
+            'azure': {
+              'resource_id': inventory_collect_azure_imds.json.resourceId | default(''),
+              'vm_id': inventory_collect_azure_imds.json.vmId | default(''),
+              'location': inventory_collect_azure_imds.json.location | default(''),
+              'storage_profile': inventory_collect_azure_imds.json.storageProfile | default(none),
+              'device_links': ((inventory_collect_azure_disk_links.stdout | from_json)
+                if (inventory_collect_azure_disk_links.rc | default(1)) == 0 else none)
+            }
+          }
+        }) }}
+  when:
+    - (ansible_facts.chassis_asset_tag | default('')) == '7783-7084-3265-9085-8269-3286-77'
+    - inventory_collect_azure_imds is defined
+    - not (inventory_collect_azure_imds.skipped | default(false))
+    - (inventory_collect_azure_imds.status | default(0)) == 200
+  tags: [inventory_collect, collect]
+
 - name: "[inventory_collect] Initialize workload evidence as unavailable"
   ansible.builtin.set_fact:
     inventory_collect_manual_packages_status: unavailable

@@ -14,16 +14,34 @@
             apply:
               delegate_to: localhost
 
-        - name: "Provision the candidate while preserving the source"
-          ansible.builtin.include_role:
-            name: aws_replacement
+        - name: "Load the destination credential belonging to this member"
+          ansible.builtin.include_tasks:
+            file: tasks/campaign_destination_access.yml
             apply:
               delegate_to: localhost
+
+        - name: "Publish this worker's member binding before observing the source"
+          ansible.builtin.include_tasks: tasks/campaign_publish_member.yml
+
+        - name: Require the provider and account selected by the frozen member
+          ansible.builtin.assert:
+            that:
+              - samurai_destination_provider in ['aws', 'azure']
+              - samurai_destination_provider == samurai_destination_context.provider
+              - vars[samurai_destination_provider ~ '_replacement'].ssh_username == samurai_candidate_login_user
+            quiet: true
+
+        - name: "Provision the candidate while preserving the source"
+          ansible.builtin.include_role:
+            name: "{{ {'aws': 'aws_replacement', 'azure': 'azure_replacement'}[samurai_destination_provider] }}"
+            apply:
+              delegate_to: localhost
+              environment: "{{ campaign_destination_environment }}"
 
         - name: "Retain the observed provider envelope"
           ansible.builtin.set_fact:
             replacement: "{{ campaign_provision_publication.ansible_stats.data.replacement }}"
-            data_sync_destination_bindings: "{{ aws_replacement_destination_bindings | default([]) }}"
+            data_sync_destination_bindings: "{{ vars.get({'aws': 'aws_replacement_destination_bindings', 'azure': 'azure_replacement_destination_bindings'}[samurai_destination_provider], []) }}"
             campaign_data_sync_volume_results: []
 
         - name: "Connect only to this candidate"
@@ -50,15 +68,17 @@
           ansible.builtin.setup:
 
         - name: "Observe the candidate devices before copying"
-          ansible.builtin.command:
-            argv: [lsblk, --json, --bytes, --paths, --output, 'NAME,SERIAL,SIZE,TYPE,FSTYPE,MOUNTPOINTS']
-          changed_when: false
+          samurai_destination_observation:
+            organization_id: "{{ organization_id | int }}"
+            provider: "{{ samurai_destination_provider }}"
+          become: true
           register: campaign_devices
 
         - name: "Bind provider identities to observed devices"
           ansible.builtin.set_fact:
+            campaign_destination_observation: "{{ campaign_devices.observation }}"
             data_sync_destination_bindings: >-
-              {{ data_sync_destination_bindings | samurai_observe_destinations(campaign_devices.stdout | from_json, replacement.instance_id) }}
+              {{ data_sync_destination_bindings | samurai_observe_destinations(campaign_devices.observation, replacement.instance_id, samurai_destination_provider) }}
 
         - name: "Publish provisioning and destination observations"
           ansible.builtin.include_tasks: tasks/campaign_publish_member.yml
@@ -67,7 +87,7 @@
           ansible.builtin.set_fact:
             instance_id: "{{ replacement.instance_id }}"
             data_sync_cloud_region: "{{ replacement.region }}"
-            data_sync_cloud_zone: "{{ replacement.describe_instances.Placement.AvailabilityZone }}"
+            data_sync_cloud_zone: "{{ replacement.availability_zone }}"
             data_sync_org_tag: samurai_organization_id
           when: data_sync_destination_intents | default([]) | length > 0
 
@@ -129,6 +149,11 @@
           ansible.builtin.fail:
             msg: Candidate preparation failed; source recovery was checked separately
       always:
+        - name: "Remove private destination access from the execution container"
+          ansible.builtin.include_tasks:
+            file: tasks/campaign_destination_access_cleanup.yml
+            apply:
+              delegate_to: localhost
         - name: "Remove private candidate access from the execution container"
           ansible.builtin.include_tasks:
             file: tasks/campaign_candidate_key_cleanup.yml

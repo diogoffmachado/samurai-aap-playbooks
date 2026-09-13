@@ -15,6 +15,9 @@
     region: "{{ data_sync_cloud_region }}"
     state: present
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  when: not (samurai_engine_callback_auth | default(false) | bool) or (campaign_destination_environment is defined and campaign_destination_environment.AWS_SECRET_ACCESS_KEY | default('') | length > 0)
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_detach
   failed_when: false
   tags: [data_sync, cloud, cleanup]
@@ -25,6 +28,9 @@
     region: "{{ data_sync_cloud_region }}"
     state: absent
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  when: not (samurai_engine_callback_auth | default(false) | bool) or (campaign_destination_environment is defined and campaign_destination_environment.AWS_SECRET_ACCESS_KEY | default('') | length > 0)
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_delete
   failed_when: false
   tags: [data_sync, cloud, cleanup]
@@ -35,6 +41,9 @@
       volume-id: "{{ data_sync_cloud_volume_id }}"
     region: "{{ data_sync_cloud_region }}"
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  when: not (samurai_engine_callback_auth | default(false) | bool) or (campaign_destination_environment is defined and campaign_destination_environment.AWS_SECRET_ACCESS_KEY | default('') | length > 0)
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_volume_check
   failed_when: false
   tags: [data_sync, cloud, cleanup]

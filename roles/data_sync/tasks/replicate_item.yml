@@ -23,6 +23,7 @@
       - data_sync_item.replication_execution_id | default('') | length > 0
       - data_sync_item.source_volume_stable_id | default('') | length > 0
       - data_sync_item_destination_volume | default('') | length > 0
+      - not (samurai_engine_callback_auth | default(false) | bool) or data_sync_item.source_transport | default('') in ['cloud-volume', 'snapshot-export']
     fail_msg: >-
       each data_sync item needs replication_execution_id, source_volume_stable_id and
       destination_volume_stable_id. The execution id names the engine's journal:
@@ -32,45 +33,27 @@
     quiet: true
   tags: [data_sync, guard]
 
-# O caminho é RESOLVIDO aqui, dentro da máquina, pelo serial NVMe que carrega o
-# id do volume. Aceitar o caminho pronto do control plane copiaria para o disco
-# que hoje atende por aquele nome, que pode ser outro.
-- name: "[data_sync] Resolve the destination device by its provider volume id"  # noqa: risky-shell-pipe
-  ansible.builtin.shell: |
-    set -eu
-    want=$(printf '%s' "{{ data_sync_item_destination_volume }}" \
-      | tr -d '-' | tr '[:upper:]' '[:lower:]')
-    discos=$(lsblk --nodeps --noheadings --output NAME,SERIAL 2>/dev/null) || exit 3
-    echo "$discos" | while read -r name serial rest; do
-      [ -n "${serial:-}" ] || continue
-      s=$(printf '%s' "$serial" | tr -d '-' | tr '[:upper:]' '[:lower:]')
-      if [ "$s" = "$want" ]; then
-        # Caminho E serial: quem julga o vínculo no control plane precisa do
-        # serial LIDO, não de um derivado do id do volume — derivá-lo faria o
-        # casamento fechar sozinho, sem ninguém ter olhado a máquina.
-        printf '%s %s\n' "/dev/$name" "$serial"
-        break
-      fi
-    done
-  args:
-    executable: /bin/sh
+- name: "[data_sync] Observe current destination identity before opening it"
+  samurai_destination_observation:
+    organization_id: "{{ organization_id | int }}"
+    provider: "{{ samurai_destination_provider }}"
   become: "{{ data_sync_become | bool }}"
-  register: data_sync_destination_resolution
-  changed_when: false
-  failed_when: false
+  register: data_sync_current_devices
   tags: [data_sync, guard]
 
-- name: "[data_sync] Refuse a destination we could not identify on this host"
-  ansible.builtin.assert:
-    that:
-      - data_sync_destination_resolution.rc == 0
-      - data_sync_destination_resolution.stdout | trim | length > 0
-    fail_msg: >-
-      destination volume {{ data_sync_item_destination_volume }} does not
-      match any block device on this candidate. Writing at block level into a disk
-      we cannot identify is how a replacement destroys the wrong volume, so the
-      stage refuses instead of guessing.
-    quiet: true
+- name: "[data_sync] Resolve the destination through its provider evidence"
+  ansible.builtin.set_fact:
+    campaign_destination_observation: "{{ data_sync_current_devices.observation }}"
+    data_sync_resolved_device: >-
+      {{ data_sync_item_destination_volume | samurai_destination_observed_device(
+         data_sync_current_devices.observation, samurai_destination_provider,
+         data_sync_destination_bindings | default([])) }}
+  tags: [data_sync, guard]
+
+- name: "[data_sync] Require an unmounted destination before seed"
+  ansible.builtin.set_fact:
+    data_sync_resolved_device: "{{ data_sync_resolved_device | samurai_require_unmounted }}"
+  when: data_sync_item.stage | default('seed') != 'final'
   tags: [data_sync, guard]
 
 - name: "[data_sync] Point the stage at this item"
@@ -78,8 +61,12 @@
     data_sync_execution_id: "{{ data_sync_item.replication_execution_id }}"
     data_sync_source: "{{ data_sync_item.source | default('') }}"
     data_sync_source_snapshot: "{{ data_sync_item.source_snapshot | default('') }}"
-    data_sync_destination: "{{ data_sync_destination_resolution.stdout.split()[0] | trim }}"
-    data_sync_destination_serial: "{{ data_sync_destination_resolution.stdout.split()[1] | default('') }}"
+    data_sync_source_transport: "{{ data_sync_item.source_transport | default('cloud-volume') }}"
+    data_sync_snapshot_directory: {}
+    data_sync_snapshot_response: {}
+    data_sync_snapshot_close: {}
+    data_sync_destination: "{{ data_sync_resolved_device.name }}"
+    data_sync_destination_serial: "{{ data_sync_resolved_device.serial | default('', true) }}"
     data_sync_destination_volume_id: "{{ data_sync_item_destination_volume }}"
     data_sync_cloud_volume_id: ""
     data_sync_volume_check: {}

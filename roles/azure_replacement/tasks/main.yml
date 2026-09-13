@@ -1,0 +1,69 @@
+---
+- name: Require the native Azure destination context
+  ansible.builtin.assert:
+    that:
+      - samurai_engine_callback_auth is sameas true
+      - samurai_destination_provider == 'azure'
+      - samurai_destination_context.provider == 'azure'
+      - samurai_destination_context.organization_id | int == organization_id | int
+      - samurai_destination_context.attempt_id == samurai_execution_id
+      - samurai_destination_context.execution_id | int == samurai_campaign_server_execution_id | int
+    quiet: true
+
+- name: Observe the source in its own provider before provisioning
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/campaign_observe_source.yml"
+  vars:
+    campaign_source_phase: before
+
+- name: Provision and observe the Azure candidate
+  block:
+    - name: Create missing destination infrastructure and confirm it through ARM
+      samurai_azure_candidate:
+        organization_id: "{{ organization_id | int }}"
+        attempt_id: "{{ samurai_execution_id }}"
+        context: "{{ samurai_destination_context }}"
+        block: "{{ azure_replacement }}"
+        intents: "{{ data_sync_destination_intents | default([]) }}"
+        plan:
+          id: "{{ data_sync_plan_id | default('') }}"
+          revision: "{{ data_sync_plan_revision | default(0) | int }}"
+          digest: "{{ samurai_data_replication_plan_digest | default('') }}"
+      register: azure_candidate_result
+      until: (azure_candidate_result.failed | default(false) | bool) or (azure_candidate_result.ready | default(false) | bool)
+      retries: 240
+      delay: 5
+      no_log: true
+
+    - name: Retain only observed candidate and disk evidence
+      ansible.builtin.set_fact:
+        replacement: "{{ azure_candidate_result.replacement }}"
+        azure_replacement_destination_bindings: "{{ azure_candidate_result.destination_bindings }}"
+
+    - name: Observe the source in its own provider after provisioning
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/campaign_observe_source.yml"
+      vars:
+        campaign_source_phase: after
+
+    - name: Include the source preservation observations
+      ansible.builtin.set_fact:
+        replacement: >-
+          {{ replacement | combine({'source_state_before': campaign_source_state_before,
+                                     'source_state_after': campaign_source_state_after}) }}
+
+    - name: Publish observed provisioning without authorizing cutover
+      ansible.builtin.set_stats:
+        data:
+          replacement: "{{ replacement }}"
+          data_sync_destination_bindings: "{{ azure_replacement_destination_bindings }}"
+        per_host: false
+      register: campaign_provision_publication
+  always:
+    - name: Preserve confirmed ownership separately from unconfirmed creation requests
+      ansible.builtin.set_fact:
+        candidate_infrastructure:
+          provider: azure
+          organization_id: "{{ organization_id | int }}"
+          campaign_server_execution_id: "{{ samurai_campaign_server_execution_id | int }}"
+          attempt_id: "{{ samurai_execution_id }}"
+          owned_resource_ids: "{{ azure_candidate_result.owned_resource_ids | default([]) }}"
+          requested_resource_ids: "{{ azure_candidate_result.requested_resource_ids | default([]) }}"

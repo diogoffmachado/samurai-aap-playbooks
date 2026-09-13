@@ -1,0 +1,64 @@
+---
+- name: Require the complete Azure credential for the frozen destination
+  ansible.builtin.assert:
+    that:
+      - campaign_destination_environment.AZURE_CLIENT_ID is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+      - campaign_destination_environment.AZURE_TENANT_ID is match('^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')
+      - campaign_destination_environment.AZURE_SUBSCRIPTION_ID == samurai_destination_context.account_id
+      - campaign_destination_environment.AZURE_CLIENT_SECRET | length > 0
+      - campaign_destination_environment.AZURE_SECRET == campaign_destination_environment.AZURE_CLIENT_SECRET
+      - campaign_destination_environment.AZURE_TENANT == campaign_destination_environment.AZURE_TENANT_ID
+      - campaign_destination_environment.AZURE_LOCATION == samurai_destination_context.region
+      - campaign_destination_environment.AZURE_AUTH_SOURCE == 'env'
+      - campaign_destination_environment.AZURE_CLOUD_ENVIRONMENT == 'AzureCloud'
+      - campaign_destination_environment.AZURE_CLIENT_CERTIFICATE_PATH == ''
+      - campaign_destination_environment.AZURE_FEDERATED_TOKEN_FILE == ''
+      - campaign_destination_environment.AZURE_AD_USER == ''
+      - campaign_destination_environment.AZURE_PASSWORD == ''
+    quiet: true
+  no_log: true
+
+- name: Verify Azure access without retaining a token in the worker facts
+  block:
+    - name: Authenticate the explicit service principal
+      ansible.builtin.uri:
+        url: "https://login.microsoftonline.com/{{ campaign_destination_environment.AZURE_TENANT_ID }}/oauth2/v2.0/token"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          grant_type: client_credentials
+          client_id: "{{ campaign_destination_environment.AZURE_CLIENT_ID }}"
+          client_secret: "{{ campaign_destination_environment.AZURE_CLIENT_SECRET }}"
+          scope: https://management.azure.com/.default
+        follow_redirects: none
+        status_code: [200]
+        timeout: 30
+      register: campaign_destination_azure_token
+      no_log: true
+
+    - name: Read the configured Azure subscription
+      ansible.builtin.uri:
+        url: "https://management.azure.com/subscriptions/{{ campaign_destination_environment.AZURE_SUBSCRIPTION_ID }}?api-version=2022-12-01"
+        headers:
+          Authorization: "Bearer {{ campaign_destination_azure_token.json.access_token }}"
+        follow_redirects: none
+        status_code: [200]
+        timeout: 30
+      register: campaign_destination_azure_subscription
+      no_log: true
+
+    - name: Require the observed tenant and subscription to match the destination
+      ansible.builtin.assert:
+        that:
+          - campaign_destination_azure_subscription.json.subscriptionId == samurai_destination_context.account_id
+          - campaign_destination_azure_subscription.json.tenantId == campaign_destination_environment.AZURE_TENANT_ID
+          - campaign_destination_azure_subscription.json.state == 'Enabled'
+        fail_msg: Azure did not confirm the frozen destination subscription and tenant
+        quiet: true
+      no_log: true
+  always:
+    - name: Clear the Azure probe token and response
+      ansible.builtin.set_fact:
+        campaign_destination_azure_token: {}
+        campaign_destination_azure_subscription: {}
+      no_log: true

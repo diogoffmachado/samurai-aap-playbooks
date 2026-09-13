@@ -1,0 +1,71 @@
+---
+- name: "[data_sync] Remove the private snapshot descriptor directory"
+  ansible.builtin.file:
+    path: "{{ data_sync_snapshot_directory.path }}"
+    state: absent
+  become: "{{ data_sync_become | bool }}"
+  when: data_sync_snapshot_directory.path | default('') | length > 0
+  register: data_sync_snapshot_file_cleanup
+  failed_when: false
+
+- name: "[data_sync] Observe the private directory after removal"
+  ansible.builtin.stat:
+    path: "{{ data_sync_snapshot_directory.path }}"
+    get_checksum: false
+    get_mime: false
+  become: "{{ data_sync_become | bool }}"
+  when: data_sync_snapshot_directory.path | default('') | length > 0
+  register: data_sync_snapshot_file_observation
+  failed_when: false
+
+- name: "[data_sync] Retain descriptor cleanup evidence"
+  ansible.builtin.set_fact:
+    campaign_data_sync_tracked_resources: >-
+      {{ campaign_data_sync_tracked_resources | default([]) + [
+           {'kind': 'snapshot_source_descriptor',
+            'identifier': new_hostname ~ ':' ~ data_sync_snapshot_directory.path,
+            'expected_disposition': 'must_be_deleted_before_commit',
+            'actual_state': ('present' if data_sync_snapshot_file_observation.stat.exists else 'absent')
+              if data_sync_snapshot_file_observation.stat.exists | default(none) | type_debug == 'bool' else 'unknown'}
+         ] }}
+  when: data_sync_snapshot_directory.path | default('') | length > 0
+
+- name: "[data_sync] Load private revocation authentication"
+  ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/data_continuity_callback_auth.yml"
+  vars:
+    data_continuity_callback_operation: close-snapshot-source
+
+- name: "[data_sync] Revoke access through the same execution authority"
+  ansible.builtin.uri:
+    url: "{{ samurai_engine_base_url | regex_replace('/$', '') }}/campaign-executions/{{ samurai_campaign_server_execution_id }}/data-continuity/close-snapshot-source"
+    method: POST
+    headers: "{{ data_continuity_callback_headers }}"
+    body_format: json
+    body:
+      source_instance_id: "{{ samurai_source_instance_id }}"
+      replication_execution_id: "{{ data_sync_execution_id }}"
+    status_code: [200]
+    timeout: 120
+  delegate_to: localhost
+  become: false
+  register: data_sync_snapshot_close
+  until: not (data_sync_snapshot_close.json.pending | default(false) | bool)
+  retries: 120
+  delay: 5
+  failed_when: false
+  no_log: true
+
+- name: "[data_sync] Keep unconfirmed snapshot revocation visible"
+  ansible.builtin.set_fact:
+    data_sync_cloud_residue: "{{ data_sync_cloud_residue | default([]) + ['snapshot-access:' ~ data_sync_execution_id] }}"
+    data_sync_cloud_residue_reason: "Snapshot access revocation was not confirmed"
+    data_sync_cleanup_failed: true
+  when: not (data_sync_snapshot_close.json.closed | default(false) | bool)
+
+- name: "[data_sync] Clear private export response and headers"
+  ansible.builtin.set_fact:
+    data_sync_snapshot_response: {}
+    data_sync_snapshot_close: {}
+    data_continuity_callback_headers: {}
+    data_continuity_private_callbacks: {}
+  no_log: true

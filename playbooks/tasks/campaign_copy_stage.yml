@@ -23,6 +23,9 @@
     status_code: [200]
     timeout: 300
   register: campaign_open_stage
+  until: not (campaign_open_stage.json.pending | default(false) | bool)
+  retries: 120
+  delay: 5
   no_log: true
 
 - name: "Require the actual execution items for this stage"

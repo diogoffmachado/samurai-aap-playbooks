@@ -1,0 +1,45 @@
+---
+- name: "[decommission] Require an explicit removal instruction"
+  ansible.builtin.assert:
+    that:
+      - decommission_destroy_instance | bool
+    quiet: true
+
+- name: "[decommission] Apply the frozen Azure resource cleanup"
+  block:
+    - name: "[decommission] Resolve only the injected Azure cloud credential"
+      ansible.builtin.set_fact:
+        azure_cleanup_environment:
+          AZURE_CLIENT_ID: "{{ lookup('ansible.builtin.env', 'AZURE_CLIENT_ID') }}"
+          AZURE_CLIENT_SECRET: "{{ lookup('ansible.builtin.env', 'AZURE_SECRET') }}"
+          AZURE_TENANT_ID: "{{ lookup('ansible.builtin.env', 'AZURE_TENANT') }}"
+          AZURE_SUBSCRIPTION_ID: "{{ lookup('ansible.builtin.env', 'AZURE_SUBSCRIPTION_ID') }}"
+          AZURE_AUTH_SOURCE: env
+          AZURE_CLOUD_ENVIRONMENT: AzureCloud
+      no_log: true
+
+    - name: "[decommission] Confirm snapshots and remove only observed resource generations"
+      samurai_azure_cleanup:
+        organization_id: "{{ organization_id | int }}"
+        execution_id: "{{ samurai_campaign_execution_id | int }}"
+        action: "{{ action }}"
+        context: "{{ samurai_cleanup_cloud_context }}"
+        keep_snapshot: "{{ decommission_keep_snapshot | bool }}"
+      environment: "{{ azure_cleanup_environment }}"
+      register: azure_cleanup_result
+      until: (azure_cleanup_result.failed | default(false) | bool) or (azure_cleanup_result.ready | default(false) | bool)
+      retries: 240
+      delay: 5
+      no_log: true
+
+    - name: "[decommission] Publish verified Azure cleanup evidence"
+      ansible.builtin.set_stats:
+        data:
+          cloud_cleanup: "{{ azure_cleanup_result }}"
+        aggregate: false
+        per_host: false
+  always:
+    - name: "[decommission] Clear the injected cloud credential variables"
+      ansible.builtin.set_fact:
+        azure_cleanup_environment: {}
+      no_log: true

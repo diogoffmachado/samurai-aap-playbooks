@@ -1,0 +1,60 @@
+---
+- name: Require complete cloud credentials with an explicit region
+  ansible.builtin.assert:
+    that:
+      - campaign_destination_environment.AWS_ACCESS_KEY_ID | length > 0
+      - campaign_destination_environment.AWS_SECRET_ACCESS_KEY | length > 0
+      - campaign_destination_environment.AWS_REGION == samurai_destination_context.region
+      - campaign_destination_environment.AWS_DEFAULT_REGION == samurai_destination_context.region
+      - campaign_destination_environment.AWS_EC2_METADATA_DISABLED == 'true'
+      - campaign_destination_environment.AWS_IGNORE_CONFIGURED_ENDPOINT_URLS == 'true'
+      - campaign_destination_environment.AWS_SESSION_TOKEN == ''
+      - campaign_destination_environment.AWS_WEB_IDENTITY_TOKEN_FILE == ''
+      - campaign_destination_environment.AWS_SECURITY_TOKEN == ''
+      - campaign_destination_environment.AWS_ROLE_ARN == ''
+      - campaign_destination_environment.AWS_PROFILE == 'samurai'
+      - campaign_destination_environment.AWS_DEFAULT_PROFILE == 'samurai'
+      - campaign_destination_environment.AWS_SHARED_CREDENTIALS_FILE == '/dev/null'
+    quiet: true
+  no_log: true
+
+- name: Prepare an isolated AWS configuration in the execution container
+  ansible.builtin.tempfile:
+    state: file
+    prefix: samurai-destination-
+  register: campaign_destination_config
+
+- name: Declare the selected profile without storing a secret in its configuration
+  ansible.builtin.copy:
+    dest: "{{ campaign_destination_config.path }}"
+    content: "[profile samurai]\nregion = {{ samurai_destination_context.region }}\n"
+    mode: '0600'
+
+- name: Bind the private environment to its isolated configuration
+  ansible.builtin.set_fact:
+    campaign_destination_environment: "{{ campaign_destination_environment | combine({'AWS_CONFIG_FILE': campaign_destination_config.path}) }}"
+  no_log: true
+
+- name: Observe the AWS account reached by this execution credential
+  ansible.builtin.command:
+    argv:
+      - "{{ aws_replacement_aws_cli_binary | default('aws') }}"
+      - sts
+      - get-caller-identity
+      - --query
+      - Account
+      - --output
+      - text
+      - --region
+      - "{{ samurai_destination_context.region }}"
+  environment: "{{ campaign_destination_environment }}"
+  register: campaign_destination_account
+  changed_when: false
+  no_log: true
+
+- name: Require the actual account to match the frozen destination
+  ansible.builtin.assert:
+    that:
+      - campaign_destination_account.stdout | trim == samurai_destination_context.account_id
+    fail_msg: The execution credential does not reach the frozen destination account
+    quiet: true

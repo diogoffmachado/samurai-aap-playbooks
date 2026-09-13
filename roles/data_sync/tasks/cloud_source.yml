@@ -11,12 +11,24 @@
 # destrói. Ele não sobrevive ao estágio.
 # ============================================================================
 
+- name: "[data_sync] Require the campaign destination credential"
+  ansible.builtin.assert:
+    that:
+      - campaign_destination_environment is defined and campaign_destination_environment is mapping
+      - campaign_destination_environment.AWS_ACCESS_KEY_ID | length > 0
+      - campaign_destination_environment.AWS_SECRET_ACCESS_KEY | length > 0
+    quiet: true
+  when: samurai_engine_callback_auth | default(false) | bool
+  no_log: true
+
 - name: "[data_sync] Read the snapshot and its tags"
   amazon.aws.ec2_snapshot_info:
     snapshot_ids:
       - "{{ data_sync_source_snapshot }}"
     region: "{{ data_sync_cloud_region }}"
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_snapshot_info
   tags: [data_sync, cloud]
 
@@ -61,6 +73,8 @@
     snapshot_ids: ["{{ data_sync_source_snapshot }}"]
     region: "{{ data_sync_cloud_region }}"
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_snapshot_ready
   until: >-
     data_sync_snapshot_ready.snapshots | default([], true) | length != 1 or
@@ -99,6 +113,8 @@
       ephemeral: "true"
     state: present
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_cloud_volume
   tags: [data_sync, cloud]
 
@@ -118,6 +134,8 @@
     region: "{{ data_sync_cloud_region }}"
     state: present
   delegate_to: localhost
+  environment: "{{ campaign_destination_environment | default({}) }}"
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   register: data_sync_cloud_attach
   tags: [data_sync, cloud]
 

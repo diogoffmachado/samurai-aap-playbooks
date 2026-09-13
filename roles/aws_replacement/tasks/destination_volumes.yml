@@ -24,6 +24,7 @@
   tags: [aws_replacement, data_sync, guard]
 
 - name: "[aws_replacement] Look for a destination already created for this item"
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   ansible.builtin.command:
     argv:
       - "{{ aws_replacement_aws_cli_binary }}"
@@ -59,6 +60,7 @@
 
 - name: "[aws_replacement] Create the empty destination volume"
   when: (aws_replacement_destination_existing.stdout | from_json | length) == 0
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   ansible.builtin.command:
     argv:
       - "{{ aws_replacement_aws_cli_binary }}"
@@ -121,6 +123,7 @@
 
 - name: "[aws_replacement] Wait for the destination to be available before attaching"
   when: (aws_replacement_destination.Attachments | default([]) | length) == 0
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   ansible.builtin.command:
     argv:
       - "{{ aws_replacement_aws_cli_binary }}"
@@ -136,6 +139,7 @@
 
 - name: "[aws_replacement] Attach the destination to the candidate"
   when: (aws_replacement_destination.Attachments | default([]) | length) == 0
+  no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
   ansible.builtin.command:
     argv:
       - "{{ aws_replacement_aws_cli_binary }}"

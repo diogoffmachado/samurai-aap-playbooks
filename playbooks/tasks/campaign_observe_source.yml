@@ -1,0 +1,56 @@
+---
+- name: Require a source observation phase
+  ansible.builtin.assert:
+    that:
+      - campaign_source_phase in ['before', 'after']
+    quiet: true
+
+- name: Prepare the source observation credential
+  ansible.builtin.include_tasks: data_continuity_callback_auth.yml
+  vars:
+    data_continuity_callback_operation: observe-source
+
+- name: Observe the source through its governed provider adapter
+  ansible.builtin.uri:
+    url: "{{ samurai_engine_base_url | regex_replace('/$', '') }}/campaign-executions/{{ samurai_campaign_server_execution_id }}/data-continuity/observe-source"
+    method: POST
+    headers: "{{ data_continuity_callback_headers }}"
+    body_format: json
+    body:
+      source_instance_id: "{{ samurai_source_instance_id }}"
+    status_code: [200, 425]
+    timeout: 90
+  register: campaign_source_observation
+  until: campaign_source_observation.status | default(0) != 425
+  retries: 10
+  delay: 2
+  no_log: true
+
+- name: Require a real observation of the active source
+  ansible.builtin.assert:
+    that:
+      - campaign_source_observation.json.observed | default(false) | bool
+      - campaign_source_observation.json.observation.InstanceId == samurai_source_instance_id
+      - campaign_source_observation.json.observation.State == 'running'
+    fail_msg: "{{ campaign_source_observation.json.reason | default('The Engine could not confirm the active source identity') }}"
+    quiet: true
+
+- name: Retain the source observation before provisioning
+  ansible.builtin.set_fact:
+    campaign_source_state_before: "{{ campaign_source_observation.json.observation }}"
+  when: campaign_source_phase == 'before'
+
+- name: Retain the source observation after provisioning
+  ansible.builtin.set_fact:
+    campaign_source_state_after: "{{ campaign_source_observation.json.observation }}"
+  when: campaign_source_phase == 'after'
+
+- name: Require the same source instance after provisioning
+  ansible.builtin.assert:
+    that:
+      - campaign_source_state_after.InstanceUuid == campaign_source_state_before.InstanceUuid
+      - campaign_source_state_after.Provider == campaign_source_state_before.Provider
+      - campaign_source_state_after.Region == campaign_source_state_before.Region
+    fail_msg: Source identity changed during candidate provisioning
+    quiet: true
+  when: campaign_source_phase == 'after'

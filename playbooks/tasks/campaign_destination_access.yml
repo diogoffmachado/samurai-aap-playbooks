@@ -1,0 +1,37 @@
+---
+- name: Require the private campaign credential file
+  ansible.builtin.assert:
+    that:
+      - lookup('ansible.builtin.env', 'SAMURAI_CAMPAIGN_CALLBACKS_FILE') | length > 0
+      - samurai_destination_context is mapping
+    quiet: true
+
+- name: Read the destination assigned to this execution
+  ansible.builtin.set_fact:
+    campaign_private_destination_document: "{{ lookup('ansible.builtin.file', lookup('ansible.builtin.env', 'SAMURAI_CAMPAIGN_CALLBACKS_FILE')) | from_json }}"
+  no_log: true
+
+- name: Require matching organization and attempt before using cloud access
+  ansible.builtin.assert:
+    that:
+      - campaign_private_destination_document.organization_id == organization_id
+      - campaign_private_destination_document.campaign_id == samurai_campaign_id
+      - campaign_private_destination_document.executions[samurai_campaign_server_execution_id | string].attempt_id == samurai_execution_id
+      - campaign_private_destination_document.executions[samurai_campaign_server_execution_id | string].destination_access.context == samurai_destination_context
+      - samurai_destination_context.execution_id == samurai_campaign_server_execution_id
+      - samurai_destination_context.organization_id == organization_id
+      - samurai_destination_context.provider in ['aws', 'azure']
+    quiet: true
+  no_log: true
+
+- name: Load private cloud access for this execution only
+  ansible.builtin.set_fact:
+    campaign_destination_environment: "{{ campaign_private_destination_document.executions[samurai_campaign_server_execution_id | string].destination_access.environment }}"
+  no_log: true
+
+- name: Validate the selected provider credential in the execution container
+  ansible.builtin.include_tasks: "{{ destination_access_tasks[samurai_destination_context.provider] }}"
+  vars:
+    destination_access_tasks:
+      aws: campaign_destination_access_aws.yml
+      azure: campaign_destination_access_azure.yml

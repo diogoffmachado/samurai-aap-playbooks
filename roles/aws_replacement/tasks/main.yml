@@ -1,4 +1,9 @@
 ---
+- name: Publish the concrete AWS destination context
+  ansible.builtin.set_fact:
+    samurai_destination_provider: aws
+  when: samurai_destination_provider is not defined
+
 # ============================================================================
 # Role: aws_replacement  (Fase 1 — Image Factory, RFC-004 §17.1, PR 8 L2I)
 #
@@ -74,8 +79,8 @@
         aws_replacement_describe_proof:
           InstanceId: "stubbed"
           State: { Name: "running" }
-        aws_replacement_source_state_before: {}
-        aws_replacement_source_state_after: {}
+        campaign_source_state_before: {}
+        campaign_source_state_after: {}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # AWS provider — create/consult/tag the NEW instance. Origin: read-only.
@@ -85,8 +90,15 @@
   tags: [aws_replacement]
   block:
     # ── Read-only preservation read: origin BEFORE ─────────────────────────
+    - name: "[aws_replacement] Observe the source in its own provider (before)"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/campaign_observe_source.yml"
+      vars:
+        campaign_source_phase: before
+      when: samurai_engine_callback_auth | default(false) | bool
+
     - name: "[aws_replacement] Describe the ORIGIN instance (read-only, before)"
-      when: aws_replacement_source_instance_id | length > 0
+      when: (aws_replacement_source_instance_id | length > 0) and not (samurai_engine_callback_auth | default(false) | bool)
+      no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
       ansible.builtin.command:
         argv:
           - "{{ aws_replacement_aws_cli_binary }}"
@@ -105,8 +117,9 @@
       failed_when: false
 
     - name: "[aws_replacement] Record origin state (before)"
+      when: not (samurai_engine_callback_auth | default(false) | bool)
       ansible.builtin.set_fact:
-        aws_replacement_source_state_before: >-
+        campaign_source_state_before: >-
           {{ (aws_replacement_source_before_raw.stdout | default('[]') | from_json | first)
              if (aws_replacement_source_before_raw is defined
                  and aws_replacement_source_before_raw.rc | default(1) == 0
@@ -115,6 +128,7 @@
 
     # ── Idempotent adoption: an instance of THIS run already exists? ──────
     - name: "[aws_replacement] Find an instance already tagged with this run's identity"
+      no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
       ansible.builtin.command:
         argv:
           - "{{ aws_replacement_aws_cli_binary }}"
@@ -170,6 +184,7 @@
     # ── Create the NEW instance (only when none exists for this run) ──────
     - name: "[aws_replacement] Run the substitute instance from the approved image"
       when: aws_replacement_instance_id is not defined
+      no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
       ansible.builtin.command:
         argv: >-
           {{ [aws_replacement_aws_cli_binary, 'ec2', 'run-instances',
@@ -198,6 +213,7 @@
 
     # ── Wait + confirm (DescribeInstances proof) ──────────────────────────
     - name: "[aws_replacement] Wait for the substitute to be running"
+      no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
       ansible.builtin.command:
         argv:
           - "{{ aws_replacement_aws_cli_binary }}"
@@ -218,6 +234,7 @@
       until: aws_replacement_state.stdout | trim == 'running'
 
     - name: "[aws_replacement] Confirm the substitute (DescribeInstances proof)"
+      no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
       ansible.builtin.command:
         argv:
           - "{{ aws_replacement_aws_cli_binary }}"
@@ -250,8 +267,15 @@
           approved '{{ aws_replacement_image_ref }}'.
 
     # ── Read-only preservation read: origin AFTER ─────────────────────────
+    - name: "[aws_replacement] Observe the source in its own provider (after)"
+      ansible.builtin.include_tasks: "{{ playbook_dir }}/tasks/campaign_observe_source.yml"
+      vars:
+        campaign_source_phase: after
+      when: samurai_engine_callback_auth | default(false) | bool
+
     - name: "[aws_replacement] Describe the ORIGIN instance (read-only, after)"
-      when: aws_replacement_source_instance_id | length > 0
+      when: (aws_replacement_source_instance_id | length > 0) and not (samurai_engine_callback_auth | default(false) | bool)
+      no_log: "{{ samurai_engine_callback_auth | default(false) | bool }}"
       ansible.builtin.command:
         argv:
           - "{{ aws_replacement_aws_cli_binary }}"
@@ -270,8 +294,9 @@
       failed_when: false
 
     - name: "[aws_replacement] Record origin state (after)"
+      when: not (samurai_engine_callback_auth | default(false) | bool)
       ansible.builtin.set_fact:
-        aws_replacement_source_state_after: >-
+        campaign_source_state_after: >-
           {{ (aws_replacement_source_after_raw.stdout | default('[]') | from_json | first)
              if (aws_replacement_source_after_raw is defined
                  and aws_replacement_source_after_raw.rc | default(1) == 0
@@ -325,16 +350,18 @@
     data:
       replacement:
         created: true
+        provider: aws
         adopted: "{{ aws_replacement_adopted | default(false) }}"
         instance_id: "{{ aws_replacement_instance_id }}"
         region: "{{ aws_replacement_region }}"
+        availability_zone: "{{ aws_replacement_describe_proof.Placement.AvailabilityZone | default('') }}"
         private_ip: "{{ aws_replacement_private_ip | default('') }}"
         public_ip: "{{ aws_replacement_public_ip | default('') }}"
         hostname: "{{ aws_replacement_hostname | default('') }}"
         source_instance_id: "{{ aws_replacement_source_instance_id | default('') }}"
         describe_instances: "{{ aws_replacement_describe_proof | default({}) }}"
-        source_state_before: "{{ aws_replacement_source_state_before | default({}) }}"
-        source_state_after: "{{ aws_replacement_source_state_after | default({}) }}"
+        source_state_before: "{{ campaign_source_state_before | default({}) }}"
+        source_state_after: "{{ campaign_source_state_after | default({}) }}"
         execution_id: "{{ samurai_execution_id }}"
         organization_id: "{{ aws_replacement_organization_id | string }}"
     per_host: false

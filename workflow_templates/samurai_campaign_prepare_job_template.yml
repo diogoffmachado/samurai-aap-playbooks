@@ -6,8 +6,7 @@ job_templates:
     playbook: playbooks/campaign_prepare.yml
     execution_environment: samurai_campaign_prepare
     job_type: run
-    credentials:
-      - samurai_campaign_aws
+    credentials: []
     ask_inventory_on_launch: true
     ask_credential_on_launch: true
     ask_job_slice_count_on_launch: true
