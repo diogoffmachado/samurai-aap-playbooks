@@ -40,10 +40,9 @@
       - samurai_cleanup_cloud_context.region == region
       - organization_id | int > 0
     quiet: true
-  when: samurai_campaign_id is defined
 
 - name: "[decommission] Select the target provider"
-  ansible.builtin.include_tasks: "{{ cleanup_tasks[samurai_cleanup_cloud_context.provider | default('aws')] }}"
+  ansible.builtin.include_tasks: "{{ cleanup_tasks[samurai_cleanup_cloud_context.provider] }}"
   vars:
     cleanup_tasks:
       aws: aws.yml
