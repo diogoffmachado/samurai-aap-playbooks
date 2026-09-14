@@ -10,7 +10,7 @@
     - name: "[decommission] Require the frozen cleanup account"
       ansible.builtin.assert:
         that:
-          - cleanup_aws_identity.account == samurai_cleanup_cloud_context.account_id
+          - (cleanup_aws_identity.account | string) == (samurai_cleanup_cloud_context.account_id | string)
         quiet: true
 
 - name: "[decommission] Require the governed cloud region"
