@@ -297,6 +297,51 @@ otherwise) and enough free space on the system drive.
 derives it from the governed asset and the merge only fills keys it has not already
 set, so the value is silently discarded.
 
+### vulnerability_validation/linux_rpm_package.yml
+
+Read-only **package version collector** for SamurAI Shield vulnerability
+validation (ADR-0021). It is the playbook behind the `samurai_validation_package`
+job template; the engine checks this exact path in the live template before every
+launch, so the path and the name are a contract. The name says "rpm" for
+historical reasons — the same playbook covers the **RedHat** and **Debian**
+families (`package_facts` with `manager: auto` reads rpmdb or dpkg).
+
+It observes ONE package on ONE host and publishes the structured facts in the
+job artifact via `set_stats` (`samurai_validation`, envelope
+`samurai.aap_validation_collector/v1`, plus `samurai_execution_id`). It never
+compares versions, never consults advisories and never concludes anything — the
+verdict belongs to the product's deterministic engine.
+
+Read-only by construction: the only modules used are `assert`, `add_host`,
+`setup`, `package_facts`, `stat`, `set_fact` and `set_stats` — the subset the
+`linux-deb-package-validation` / `linux-rpm-package-validation` templates declare.
+No `shell`/`command`, no package or service module, no file writes, no network.
+Every task that touches the host has `changed_when: false`; a missing package
+manager becomes `package_installed: unknown`, never an install.
+
+Inputs are extra-vars injected by the product at launch (a survey with the same
+names works for manual runs): `samurai_execution_id`, `validation_organization_id`,
+`validation_asset_id`, `validation_vulnerability_id`, `validation_target_host`,
+`validation_package_name`, and optionally `validation_attempt_id` and
+`validation_package_architecture` (multiarch disambiguation);
+`validation_service_name` is accepted and ignored. Play 1 validates them on
+`localhost` (fail-closed, numeric IDs, package-name allowlist) and registers the
+target with `add_host`; play 2 collects on it with `gather_facts: true`. The job
+template inventory is irrelevant.
+
+Per-family behaviour (any other family fails closed):
+
+| Fact | Debian (Ubuntu) | RedHat |
+| --- | --- | --- |
+| `collector.validation_template_id` | `linux-deb-package-validation` | `linux-rpm-package-validation` |
+| `facts.observed_evr` | the dpkg version verbatim (e.g. `5.40.1-7ubuntu0.2`, `1:2.3-4`); `epoch`/`release` are `null` | `[epoch:]version-release` assembled from the rpm fields |
+| `facts.reboot_required` | `/var/run/reboot-required` exists → `true`/`false` | `unknown` |
+| `facts.package_architecture` | e.g. `amd64` | e.g. `x86_64` |
+
+When the package is installed in more than one architecture and no
+`validation_package_architecture` was given, `architecture_ambiguous` is `true`
+and no instance is picked — the engine fails closed instead of guessing.
+
 ## AAP Project Configuration
 
 Use this repository as a Git project in Ansible Automation Platform.
