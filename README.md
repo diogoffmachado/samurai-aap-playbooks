@@ -343,10 +343,11 @@ When the package is installed in more than one architecture and no
 and no instance is picked — the engine fails closed instead of guessing.
 
 Survey for manual runs (the governed path injects everything as extra-vars):
-[linux_rpm_package.survey_spec.json](playbooks/vulnerability_validation/linux_rpm_package.survey_spec.json).
-Apply it the same way as the Windows one (below) and enable **Prompt on launch →
-Extra variables** on the Job Template, otherwise the engine's extra-vars are
-discarded. The Job Template needs only a machine (SSH) credential; its inventory
+[linux_rpm_package.survey_spec.json](playbooks/vulnerability_validation/linux_rpm_package.survey_spec.json)
+— the six required inputs only; the optional ones arrive as extra-vars from the
+engine. Apply it the same way as the Windows one (below) and keep **Prompt on
+launch → Extra variables** enabled on the Job Template, otherwise the engine's
+extra-vars are discarded. The Job Template needs only a machine (SSH) credential; its inventory
 is not used.
 
 ## AAP Project Configuration
